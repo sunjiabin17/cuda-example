@@ -107,7 +107,45 @@ __global__ void reduction_interleaved_pairs(int * int_array,
     }
 }
 
-// loop unrolling
+// // loop unrolling
+// __global__ void reduction_kernel_warp_unrolling(int * int_array,
+//     int * temp_array, int size)
+// {
+//     int tid = threadIdx.x;
+
+//     //element index for this thread
+//     int index = blockDim.x * blockIdx.x  + threadIdx.x;
+
+//     //local data pointer
+//     int * i_data = int_array + blockDim.x * blockIdx.x ;
+
+//     for (int offset = blockDim.x/2; offset >= 64; offset = offset/2)
+//     {
+//         if (tid < offset)
+//         {
+//             i_data[tid] += i_data[tid + offset];
+//         }
+//         __syncthreads();
+//     }
+// 		// 展开 unrolling last 5 iteration
+//     if (tid < 32)
+//     {
+//         volatile int * vsmem = i_data;
+//         vsmem[tid] += vsmem[tid + 32];
+//         vsmem[tid] += vsmem[tid + 16];
+//         vsmem[tid] += vsmem[tid + 8];
+//         vsmem[tid] += vsmem[tid + 4];
+//         vsmem[tid] += vsmem[tid + 2];
+//         vsmem[tid] += vsmem[tid + 1];
+//     }
+
+//     if (tid == 0)
+//     {
+//         temp_array[blockIdx.x] = i_data[0];
+//     }
+// }
+
+// warp unrolling
 __global__ void reduction_kernel_warp_unrolling(int * int_array,
     int * temp_array, int size)
 {
@@ -145,27 +183,34 @@ __global__ void reduction_kernel_warp_unrolling(int * int_array,
     }
 }
 
-// warp unrolling
-__global__ void reduction_kernel_warp_unrolling(int * int_array,
+// complete unrolling
+__global__ void reduction_kernel_complete_unrolling(int * int_array,
     int * temp_array, int size)
 {
     int tid = threadIdx.x;
 
     //element index for this thread
-    int index = blockDim.x * blockIdx.x  + threadIdx.x;
+    int index = blockDim.x * blockIdx.x + threadIdx.x;
 
     //local data pointer
-    int * i_data = int_array + blockDim.x * blockIdx.x ;
+    int * i_data = int_array + blockDim.x * blockIdx.x;
 
-    for (int offset = blockDim.x/2; offset >= 64; offset = offset/2)
-    {
-        if (tid < offset)
-        {
-            i_data[tid] += i_data[tid + offset];
-        }
-        __syncthreads();
-    }
-		// 展开 unrolling last 5 iteration
+    if (blockDim.x == 1024 && tid < 512)
+        i_data[tid] += i_data[tid + 512];
+    __syncthreads();
+
+    if (blockDim.x == 512 && tid < 256)
+        i_data[tid] += i_data[tid + 256];
+    __syncthreads();
+
+    if (blockDim.x == 256 && tid < 128)
+        i_data[tid] += i_data[tid + 128];
+    __syncthreads();
+
+    if (blockDim.x == 128 && tid < 64)
+        i_data[tid] += i_data[tid + 64];
+    __syncthreads();
+
     if (tid < 32)
     {
         volatile int * vsmem = i_data;
@@ -217,7 +262,7 @@ int main(int argc, char **argv)
     gpuErrchk(cudaMemcpy(d_input, h_input, byte_size,
                          cudaMemcpyHostToDevice));
 
-    redunction_neighbored_pairs<<<grid, block>>>(d_input, d_temp, size);
+    reduction_kernel_complete_unrolling<<<grid, block>>>(d_input, d_temp, size);
 
     gpuErrchk(cudaDeviceSynchronize());
 
