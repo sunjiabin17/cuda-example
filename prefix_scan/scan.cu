@@ -50,7 +50,7 @@ void compare_arrays(int * a, int * b, int size)
 
 
 
-#define BLOCK_SIZE 512
+#define BLOCK_SIZE 1024
 
 void inclusive_scan_cpu(int *input, int *output, int size)
 {
@@ -77,49 +77,124 @@ __global__ void naive_inclusive_scan_single_block(int *input, int size)
 	}
 }
 
+__global__ void efficient_exclusive_scan_single_block(int *input, int size)
+{
+	int tid = threadIdx.x;
+	int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (gid < size)
+	{
+		// reduction phase
+		for (int stride = 1; stride < blockDim.x; stride *= 2) {
+			int index = (tid + 1) * stride * 2 - 1;	// odd index
+			if (index < blockDim.x) {
+				input[index] += input[index - stride];
+			}
+			__syncthreads();
+		}
+
+		// set root value to 0
+		if (tid == 0) {
+			input[blockDim.x - 1] = 0;
+		}
+
+		int temp = 0;
+
+		// down-sweep phase
+		for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+			int index = (tid + 1) * stride * 2 - 1;
+			if (index < blockDim.x) {
+				temp = input[index - stride];	// assign left child value to temp
+				input[index - stride] = input[index];	// assign parent value to left child
+				input[index] += temp;	// add left child value to parent value
+			}
+			__syncthreads();
+		}
+	}
+}
+
+
 __global__ void efficient_inclusive_scan_single_block(int *input,int size)
 {
 	int tid = threadIdx.x;
 	int gid = blockIdx.x * blockDim.x + threadIdx.x;
 
+	// shared memory optimization
+	__shared__ int shared_block[BLOCK_SIZE];
+
 	if (gid < size)
-	{
-		for (int stride = 1; stride <= tid; stride *= 2)
-		{
-			input[gid] += input[gid - stride];
+	{	
+		// copy data to shared memory
+		shared_block[tid] = input[gid];
+		__syncthreads();
+
+		// reduction phase (same as exclusive scan)
+		for (int stride = 1; stride < blockDim.x; stride *= 2) {
+			int index = (tid + 1) * stride * 2 - 1;	// odd index
+			if (index < blockDim.x) {
+				shared_block[index] += shared_block[index - stride];
+			}
 			__syncthreads();
+		}
+
+		// down-sweep phase
+		for (int stride = blockDim.x / 4; stride > 0; stride /= 2) {
+			int index = (tid + 1) * stride * 2 - 1;
+			if (index + stride < blockDim.x) {
+				shared_block[index + stride] += shared_block[index];
+			}
+			__syncthreads();
+		}
+
+		// copy data back to global memory
+		input[gid] = shared_block[tid];
+	}
+}
+
+__global__ void inclusive_prescan(int *input, int *aux, int size) {
+	int tid = threadIdx.x;
+	int gid = blockIdx.x * blockDim.x + threadIdx.x;
+
+	// shared memory optimization
+	__shared__ int shared_block[BLOCK_SIZE];
+
+	if (gid < size)
+	{	
+		// copy data to shared memory
+		shared_block[tid] = input[gid];
+		__syncthreads();
+
+		// reduction phase
+		for (int stride = 1; stride < blockDim.x; stride *= 2) {
+			int index = (tid + 1) * stride * 2 - 1;	// odd index
+			if (index < blockDim.x) {
+				shared_block[index] += shared_block[index - stride];
+			}
+			__syncthreads();
+		}
+
+		// down-sweep phase
+		for (int stride = blockDim.x / 4; stride > 0; stride /= 2) {
+			int index = (tid + 1) * stride * 2 - 1;
+			if (index + stride < blockDim.x) {
+				shared_block[index + stride] += shared_block[index];
+			}
+			__syncthreads();
+		}
+
+		// copy data back to global memory
+		input[gid] = shared_block[tid];
+		
+		if (tid == blockDim.x - 1) {
+			aux[blockIdx.x] = shared_block[tid];
 		}
 	}
 }
 
-__global__ void efficient_inclusive_scan(int *input, int * aux ,int size)
-{
-	int tid = threadIdx.x;
+__global__ void inclusive_postscan(int *input, int *aux, int size) {
 	int gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-	if (gid < size)
-	{
-		for (int stride = 1; stride <= tid; stride *= 2)
-		{
-			input[gid] += input[gid - stride];
-			__syncthreads();
-		}
-	}
-}
-
-
-__global__ void sum_aux_values(int *input,  int *aux, int size)
-{
-	int tid = threadIdx.x;
-	int gid = blockIdx.x * blockDim.x + threadIdx.x;
-
-	if (gid < size)
-	{
-		for (int i = 0; i < blockIdx.x; i++)
-		{
-			input[gid] += aux[i];
-			__syncthreads();
-		}
+	if (gid < size and blockIdx.x > 0) {
+		input[gid] += aux[blockIdx.x-1];
 	}
 }
 
@@ -162,34 +237,19 @@ int main(int argc, char**argv)
 	dim3 block(BLOCK_SIZE);
 	dim3 grid(input_size/ block.x);
 
-	int aux_byte_size = block.x * sizeof(int);
+	int aux_byte_size = grid.x * sizeof(int);
 	cudaMalloc((void**)&d_aux , aux_byte_size);
 
 	h_aux = (int*)malloc(aux_byte_size);
 	
-	naive_inclusive_scan_single_block << <grid, block >> > (d_input, input_size);
+	inclusive_prescan << <grid, block >> > (d_input, d_aux, input_size);
+	efficient_inclusive_scan_single_block << <1, 1024 >> > (d_aux, grid.x);
+	inclusive_postscan << <grid, block >> > (d_input, d_aux, input_size);
+
 	cudaDeviceSynchronize();
 
 	cudaMemcpy(h_aux, d_aux, aux_byte_size, cudaMemcpyDeviceToHost);
 	cudaMemcpy(h_ref, d_input, byte_size, cudaMemcpyDeviceToHost);
-
-	print_arrays_toafile(h_ref, input_size, "input_array.txt");
-
-	for (int i = 0; i < input_size; i++)
-	{
-		for (int j = 0; j < i / BLOCK_SIZE ; j++)
-		{
-			h_ref[i] += h_aux[j];
-		}
-	}
-
-	print_arrays_toafile(h_aux,grid.x, "aux_array.txt");
-
-	sum_aux_values << < grid, block >> > (d_input, d_aux, input_size);
-	cudaDeviceSynchronize();
-
-	cudaMemcpy(h_ref, d_input, byte_size, cudaMemcpyDeviceToHost );
-	print_arrays_toafile_side_by_side(h_ref, h_output, input_size, "scan_outputs.txt");
 
 	compare_arrays(h_ref, h_output, input_size);
 
