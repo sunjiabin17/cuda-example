@@ -3,12 +3,10 @@
 
 #include <stdio.h>
 
-
-__global__ void vectorAdd(int *a, int *b, int *c, int n)
-{
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n)
-        c[i] = a[i] + b[i];
+__global__ void vectorAdd(int *a, int *b, int *c, int N) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < N)
+        c[tid] = a[tid] + b[tid];
 }
 
 void init(int *a, int n) {
@@ -31,27 +29,20 @@ int main() {
     constexpr int N = 1 << 16; // 65536 elements
     constexpr size_t bytes = sizeof(int) * N;
 
-    int *h_a, *h_b, *h_c, *ref_c;
-    h_a = (int*)malloc(bytes);
-    h_b = (int*)malloc(bytes);
-    h_c = (int*)malloc(bytes);
+    int *a, *b, *c, *ref_c;
+    // unified memory
+    cudaMallocManaged(&a, bytes);
+    cudaMallocManaged(&b, bytes);
+    cudaMallocManaged(&c, bytes);
+    
     ref_c = (int*)malloc(bytes);
 
-    init(h_a, N);
-    init(h_b, N);
+    init(a, N);
+    init(b, N);
 
     for (int i = 0; i < N; i++) {
-        ref_c[i] = h_a[i] + h_b[i];
+        ref_c[i] = a[i] + b[i];
     }
-
-    int *d_a, *d_b, *d_c;
-    cudaMalloc(&d_a, bytes);
-    cudaMalloc(&d_b, bytes);
-    cudaMalloc(&d_c, bytes);
-
-    cudaMemcpy(d_a, h_a, bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_b, h_b, bytes, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_c, h_c, bytes, cudaMemcpyHostToDevice);
 
     int NUM_THREADS = 1 << 10;
     
@@ -61,22 +52,17 @@ int main() {
     int NUM_BLOCKS = (N + NUM_THREADS - 1) / NUM_THREADS;
     // int NUM_BLOCKS = (int)ceil(N / NUM_THREADS);
 
-    vectorAdd<<<NUM_BLOCKS, NUM_THREADS>>>(d_a, d_b, d_c, N);
+    vectorAdd<<<NUM_BLOCKS, NUM_THREADS>>>(a, b, c, N);
     cudaDeviceSynchronize();
 
-    cudaMemcpy(h_c, d_c, bytes, cudaMemcpyDeviceToHost);
 
-    verify(h_c, ref_c, N);
+    verify(c, ref_c, N);
 
-    free(h_a);
-    free(h_b);
-    free(h_c);
+    cudaFree(a);
+    cudaFree(b);
+    cudaFree(c);
     free(ref_c);
-
-    cudaFree(d_a);
-    cudaFree(d_b);
-    cudaFree(d_c);
-
+    
     return 0;
 }
 
