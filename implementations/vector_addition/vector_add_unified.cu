@@ -66,6 +66,6 @@ int main() {
     return 0;
 }
 
-// compile: nvcc -o baseline thisfile.cu
-// run: ./baseline
-// profile: nvprof ./baseline
+// compile: nvcc -o unified thisfile.cu
+// run: ./unified
+// profile: nvprof ./unified

@@ -78,9 +78,9 @@ int main() {
     return 0;
 }
 
-// compile: nvcc -o baseline thisfile.cu
-// run: ./baseline
-// profile: nvprof ./baseline
+// compile: nvcc -o pinned thisfile.cu
+// run: ./pinned
+// profile: nvprof ./pinned
 // nvprof --print-gpu-trace ./pinned
 /***
 (base) ➜  vector_addition git:(main) ✗ nvprof --print-gpu-trace ./pinned

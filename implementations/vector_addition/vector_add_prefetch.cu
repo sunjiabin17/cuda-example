@@ -79,6 +79,6 @@ int main() {
     return 0;
 }
 
-// compile: nvcc -o baseline thisfile.cu
-// run: ./baseline
-// profile: nvprof ./baseline
+// compile: nvcc -o prefetch thisfile.cu
+// run: ./prefetch
+// profile: nvprof ./prefetch
