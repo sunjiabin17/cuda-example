@@ -15,6 +15,7 @@ using std::generate;
 constexpr int THREADS = 256;
 constexpr int SHARED_SIZE = 256;
 
+// 解决warp divergence: 使同一个warp里的threads走同一个分支
 __global__ void reduce(int *input, int *output) {
     __shared__ int shared[SHARED_SIZE];
     
@@ -23,17 +24,25 @@ __global__ void reduce(int *input, int *output) {
     shared[threadIdx.x] = input[gid];
     __syncthreads();
 
-    // 1   2   3   4   5   6   7   8
-    // |  /    |  /    |  /    |  /
-    // 3       7       11      15
-    // |      /        |      /
-    // 10              26
-    // |              /
-    // 36
+    // 0   1   2   3   4   5   6   7
+    // 第一次迭代: i = 1
+    // thread 0: index = 0, 计算 shared[0]+shared[1]，保存在shared[0]
+    // thread 1: index = 2, 计算 shared[2]+shared[3]，保存在shared[2]
+    // thread 2: index = 4, 计算 shared[4]+shared[5]，保存在shared[4]
+    // thread 3: index = 6, 计算 shared[6]+shared[7]，保存在shared[6]
+    // thread 4-7: index >= blockDim.x，不执行
+    // 第二次迭代: i = 2
+    // thread 0: index = 0, 计算 shared[0]+shared[2]，保存在shared[0]
+    // thread 1: index = 4, 计算 shared[4]+shared[6]，保存在shared[4]
+    // thread 2-7: index >= blockDim.x，不执行
+    // 第三次迭代: i = 4
+    // thread 0: index = 0, 计算 shared[0]+shared[4]，保存在shared[0]
+    // thread 1-7: index >= blockDim.x，不执行
+    // 第四次迭代: i = 8 超出blockDim.x，退出循环
     for (int i = 1; i < blockDim.x; i *= 2) {
-        // divergent branch
-        if (threadIdx.x % (2 * i) == 0) {
-            shared[threadIdx.x] += shared[threadIdx.x + i];
+        int index = 2 * i * threadIdx.x;
+        if (index < blockDim.x) {
+            shared[index] += shared[index + i];
         }
         __syncthreads();
     }

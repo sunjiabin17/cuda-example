@@ -15,6 +15,7 @@ using std::generate;
 constexpr int THREADS = 256;
 constexpr int SHARED_SIZE = 256;
 
+// 解决bank conflict
 __global__ void reduce(int *input, int *output) {
     __shared__ int shared[SHARED_SIZE];
     
@@ -23,23 +24,33 @@ __global__ void reduce(int *input, int *output) {
     shared[threadIdx.x] = input[gid];
     __syncthreads();
 
-    // 1   2   3   4   5   6   7   8
-    // |  /    |  /    |  /    |  /
-    // 3       7       11      15
-    // |      /        |      /
-    // 10              26
-    // |              /
-    // 36
-    for (int i = 1; i < blockDim.x; i *= 2) {
-        // divergent branch
-        if (threadIdx.x % (2 * i) == 0) {
+    // blockDim.x = 256
+    // 第一次迭代: i = 128
+    // thread 0: 计算shared[0] + shared[128] -> shared[0]
+    // thread 1: 计算shared[1] + shared[129] -> shared[1]
+    // ...
+    // warp 0: 读取shared memory 中连续的[0-31] 和 [128-159]
+    // warp 1: 读取shared memory 中连续的[32-63] 和 [160-191]
+    // ...
+    // 不存在bank conflict
+    // 第二次迭代: i = 64
+    // thread 0: 计算shared[0] + shared[64] -> shared[0]
+    // thread 1: 计算shared[1] + shared[65] -> shared[1]
+    // ...
+    // warp 0: 读取shared memory 中连续的[0-31] 和 [64-95]
+    // warp 1: 读取shared memory 中连续的[32-63] 和 [96-127]
+    // ...
+    // 不存在bank conflict
+    // 等等...
+    for(unsigned int i=blockDim.x/2; i > 0; i >>= 1) {
+        if (threadIdx.x < i) {
             shared[threadIdx.x] += shared[threadIdx.x + i];
         }
         __syncthreads();
     }
 
     if (threadIdx.x == 0) {
-        output[blockIdx.x] = shared[0];
+        output[blockIdx.x] = shared[threadIdx.x];
     }
 }
 
