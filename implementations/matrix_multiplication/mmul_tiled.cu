@@ -23,7 +23,7 @@ __global__ void matrixMultiplication(int *a, int *b, int *c, int n)
     int c_value = 0;
 
     // 把整个矩阵分成多个小块，每个小块的大小为blockDim.x * blockDim.y （32*32）
-    for (int i = 0; i < N; i += blockDim.x) {
+    for (int i = 0; i < n; i += blockDim.x) {
         // 把a矩阵中按先row后col的顺序划分每个小块，并加载到共享内存中
         // |1 2| |3 4|
         // |5 6| |7 8|
@@ -60,7 +60,7 @@ __global__ void matrixMultiplication(int *a, int *b, int *c, int n)
         // i * N = 8, threadIdx.y * N = 4, col = 1
         // b[3][1] = b[8 + 4 + 1] = b[13] = 4
         // b_shared[1][1] = b_shared[3] = 4
-        b_shared[threadIdx.y * blockDim.x + threadIdx.x] = b[i * N + threadIdx.y * N + col];
+        b_shared[threadIdx.y * blockDim.x + threadIdx.x] = b[i * n + threadIdx.y * n + col];
 
         __syncthreads();
 
