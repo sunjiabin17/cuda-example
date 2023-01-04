@@ -57,7 +57,7 @@ __global__ void reduce(int *input, int *output) {
 }
 
 int main() {
-    constexpr int N = 1 << 23;
+    constexpr int N = 1 << 16;
     int size = N * sizeof(int);
     vector<int> h_input(N);
     vector<int> h_output(N);
