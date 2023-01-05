@@ -120,7 +120,6 @@ void mysgemm_v5(int M, int N, int K, float alpha, float* A, float* B, float beta
     C(row4,col) = alpha * Cres[3] + beta*C(row4,col);
 }
 
-
 #define A(i,j) A[(i) + (j)*lda]
 #define B(i,j) B[(i) + (j)*ldb]
 #define C(i,j) C[(i) + (j)*ldc]
@@ -200,3 +199,4 @@ void mysgemm_v7(int M, int N, int K, float alpha, float* A, float* B, float beta
     vstore(&C(row_a,col_c+2), Cres[2])
     vstore(&C(row_a,col_c+3), Cres[3])
 }
+

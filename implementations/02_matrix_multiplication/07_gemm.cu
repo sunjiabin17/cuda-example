@@ -250,6 +250,96 @@ __global__ __launch_bounds__(256) void gemm7_4x1_vectorized_load_store(int M, in
     *((float4*)(&C[IDX2C(row1, col, ldc)])) = Cv; 
 }
 
+#define bM8 64
+#define bN8 64
+#define bK8 16
+
+__global__ __launch_bounds__(256) void gemm8_4x4_micro_kernel(int M, int N, int K, float alpha, float* A, float* B, float beta, float* C) {
+    // block size: 64*64, thread size: 16*16
+    int lda = M, ldb = K, ldc = M;
+    int tx = threadIdx.x; // one dim
+    int bx = blockIdx.x, by = blockIdx.y;
+    
+    #define IDX8(i,j,ld) (((j)*(ld))+(i))  // A,B,C matrix index
+    #define SIDX8(i,j) IDX8(i,j,(1<<6))     // shared memory index
+
+    int row_a = (tx&15)<<2, col_a = tx>>4;  // 分成4x4的块
+    int row_b = (tx&3)<<2, col_b = tx>>2;
+    int col_c = col_a<<2;
+    int lda16 = lda<<4;
+
+    A = &(A[(bx << 6)]);
+    B = &(B[(by << 6) * ldb]);
+    C = &(C[(bx << 6) + (by << 6) * ldc]);  // the TB size is 64.
+
+    __shared__ float a_tile[bM8*bK8];
+    __shared__ float b_tile[bK8*bN8];
+
+    float4 Av, Bv, Cv[4], tmps[4];
+    memset(tmps, 0, sizeof(tmps));
+
+    for (int k_idx = 0; k_idx < K; k_idx += bK8) {
+        Av = *((float4 *)(&A(row_a, col_a)));
+        Bv = *((float4 *)(&B(row_b, col_b)));
+        ((float4 *)a_tile)[tx] = Av;
+        // ((float4 *)b_tile)[tx] = Bv;
+        b_tile[SIDX8(col_b, row_b)] = Bv.x;
+        b_tile[SIDX8(col_b, row_b+1)] = Bv.y;
+        b_tile[SIDX8(col_b, row_b+2)] = Bv.z;
+        b_tile[SIDX8(col_b, row_b+3)] = Bv.w;
+        A += lda16;
+        B += bK8;
+        __syncthreads();
+        #pragma unroll
+        for (int inner_k = 0; inner_k < bK8; ++inner_k) {
+            Av = *((float4 *)(&a_tile[SIDX8(row_a, inner_k)]));
+            Bv = *((float4 *)(&b_tile[SIDX8(col_c, inner_k)]));
+            tmps[0].x += Av.x * Bv.x;
+            tmps[0].y += Av.y * Bv.x;
+            tmps[0].z += Av.z * Bv.x;
+            tmps[0].w += Av.w * Bv.x;
+            tmps[1].x += Av.x * Bv.y;
+            tmps[1].y += Av.y * Bv.y;
+            tmps[1].z += Av.z * Bv.y;
+            tmps[1].w += Av.w * Bv.y;
+            tmps[2].x += Av.x * Bv.z;
+            tmps[2].y += Av.y * Bv.z;
+            tmps[2].z += Av.z * Bv.z;
+            tmps[2].w += Av.w * Bv.z;
+            tmps[3].x += Av.x * Bv.w;
+            tmps[3].y += Av.y * Bv.w;
+            tmps[3].z += Av.z * Bv.w;
+            tmps[3].w += Av.w * Bv.w;
+        }
+        __syncthreads();
+    }
+    Cv[0] = *((float4*)(&C[IDX8(row_a, col_c, ldc)]));
+    Cv[1] = *((float4*)(&C[IDX8(row_a, col_c+1, ldc)]));
+    Cv[2] = *((float4*)(&C[IDX8(row_a, col_c+2, ldc)]));
+    Cv[3] = *((float4*)(&C[IDX8(row_a, col_c+3, ldc)]));
+
+    tmps[0].x = alpha * tmps[0].x + beta * Cv[0].x;
+    tmps[0].y = alpha * tmps[0].y + beta * Cv[0].y;
+    tmps[0].z = alpha * tmps[0].z + beta * Cv[0].z;
+    tmps[0].w = alpha * tmps[0].w + beta * Cv[0].w;
+    tmps[1].x = alpha * tmps[1].x + beta * Cv[1].x;
+    tmps[1].y = alpha * tmps[1].y + beta * Cv[1].y;
+    tmps[1].z = alpha * tmps[1].z + beta * Cv[1].z;
+    tmps[1].w = alpha * tmps[1].w + beta * Cv[1].w;
+    tmps[2].x = alpha * tmps[2].x + beta * Cv[2].x;
+    tmps[2].y = alpha * tmps[2].y + beta * Cv[2].y;
+    tmps[2].z = alpha * tmps[2].z + beta * Cv[2].z;
+    tmps[2].w = alpha * tmps[2].w + beta * Cv[2].w;
+    tmps[3].x = alpha * tmps[3].x + beta * Cv[3].x;
+    tmps[3].y = alpha * tmps[3].y + beta * Cv[3].y;
+    tmps[3].z = alpha * tmps[3].z + beta * Cv[3].z;
+    tmps[3].w = alpha * tmps[3].w + beta * Cv[3].w;
+
+    *((float4*)(&C[IDX8(row_a, col_c, ldc)])) = tmps[0];
+    *((float4*)(&C[IDX8(row_a, col_c+1, ldc)])) = tmps[1];
+    *((float4*)(&C[IDX8(row_a, col_c+2, ldc)])) = tmps[2];
+    *((float4*)(&C[IDX8(row_a, col_c+3, ldc)])) = tmps[3];
+}
 
 int main(int argc, char** argv) {
     if (argc < 4) {
@@ -268,11 +358,6 @@ int main(int argc, char** argv) {
     N = (int)pow(2, N);
     int K = atoi(argv[3]);
     K = (int)pow(2, K);
-
-    int BLOCK_M = (M + bM - 1) / bM;
-    int BLOCK_N = (N + bN - 1) / bN;
-    int BLOCK_K = (K + bK - 1) / bK;
-
 
     float* A = new float[M * K];
     float* B = new float[K * N];
@@ -298,6 +383,10 @@ int main(int argc, char** argv) {
     cudaMemcpy(dB, B, K * N * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(dC, C, M * N * sizeof(float), cudaMemcpyHostToDevice);
 
+    int BLOCK_M = (M + bM - 1) / bM;
+    int BLOCK_N = (N + bN - 1) / bN;
+    int BLOCK_K = (K + bK - 1) / bK;
+
     dim3 block(32, 32);
     dim3 grid(BLOCK_M, BLOCK_N);
     dim3 grid2((M+64-1)/64, (N+64-1)/64);
@@ -309,10 +398,11 @@ int main(int argc, char** argv) {
     gemm5_reduce_bank_conflict<<<grid, 32*32>>>(M, N, K, dA, dB, dC);
     gemm6_4x1_micro_kernel<<<grid, 16*16>>>(M, N, K, dA, dB, dC);   // 每个线程处理4个元素
     gemm7_4x1_vectorized_load_store<<<grid, 16*16>>>(M, N, K, dA, dB, dC);   // 每个线程处理4个元素
+    gemm8_4x4_micro_kernel<<<grid2, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4x4个元素
     // mysgemm_v2<<<grid, block>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);
     // mysgemm_v4<<<grid, 32*32>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);
     // mysgemm_v5<<<grid, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4个元素
-    mysgemm_v7<<<grid2, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4x4个元素
+    // mysgemm_v7<<<grid2, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4x4个元素
     cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
     
     // matrix multiplication using cublas (M, K) * (K, N) = (M, N)
