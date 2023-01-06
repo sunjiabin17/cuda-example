@@ -458,7 +458,6 @@ __global__ __launch_bounds__(256) void gemm8_4x4_micro_kernel_2(int M, int N, in
 }
 
 
-
 //v1 += v2 * s3, vector scaling
 #define vscal(v1, v2, s3)\
     v1.x+=v2.x*s3;\
@@ -601,6 +600,137 @@ __global__ __launch_bounds__(256) void gemm9_8x8_micro_kernel(int M, int N, int 
 }
 
 
+#define bM10 128
+#define bN10 128
+#define bK10 8
+
+#define IDX10(i,j,ld) (((j)*(ld))+(i))  // A,B,C matrix index
+#define SIDX10(i,j) IDX10(i,j,(1<<7))     // shared memory index
+
+// ({Ms,Ns,Ks}={128,128,8}, {Mr,Nr}={8,8})
+__global__ __launch_bounds__(256) void gemm10_8x8_warp_tile(int M, int N, int K, float alpha, float* A, float* B, float beta, float* C) {
+    // block size: 128*128, thread size: 16*16, 每个block有8个warp
+    int lda = M, ldb = K, ldc = M;
+    int tx = threadIdx.x;           // tx = 0-255
+    int bx = blockIdx.x, by = blockIdx.y;
+    int warp_id = tx >> 5;              // tx/32, warp_id = 0-7
+    int lane_id = tx & 31;              // tx%32, lane_id = 0-31
+    int warp_row = warp_id & 3;         // warp_id%4, warp_row = 0-3
+    int warp_col = warp_id >> 2;        // warp_id/4, warp_col = 0-1
+    int row_w = lane_id & 3;            // lane_id%4, row_w = 0-3
+    int col_w = lane_id >> 2;           // lane_id/4, col_w = 0-7
+
+    int row_a = (tx&31)<<2, col_a = tx>>5;
+    int row_b = (tx&1)<<2, col_b = tx>>1;
+    int lda8 = lda<<3;
+    int row_c = (warp_row<<5) + (row_w<<3);
+    int col_c = (warp_col<<6) + (col_w<<3);
+
+
+    A = &(A[(bx<<7)]);
+    B = &(B[(by<<7) * ldb]);
+    C = &(C[(bx<<7) + (by<<7) * ldc]);
+
+    __shared__ float a_tile[bM10*bK10];
+    __shared__ float b_tile[bK10*bN10];
+
+    float4 Av1, Av2, Bv1, Bv2, Cv[16], tmps[16];
+    memset(tmps, 0, sizeof(tmps));
+
+    for (int k_idx = 0; k_idx < K; k_idx += bK10) {
+        Av1 = *((float4 *)(&A[IDX10(row_a, col_a, lda)]));
+        Bv1 = *((float4 *)(&B[IDX10(row_b, col_b, ldb)]));
+        ((float4 *)a_tile)[tx] = Av1;
+        b_tile[SIDX10(col_b, row_b)] = Bv1.x;
+        b_tile[SIDX10(col_b, row_b+1)] = Bv1.y;
+        b_tile[SIDX10(col_b, row_b+2)] = Bv1.z;
+        b_tile[SIDX10(col_b, row_b+3)] = Bv1.w;
+        A += lda8; B += bK10;
+        __syncthreads();
+
+        #pragma unroll
+        for (int inner_k = 0; inner_k < bK10; ++inner_k) {
+            Av1 = *((float4 *)(&a_tile[SIDX10(row_c, inner_k)]));
+            Av2 = *((float4 *)(&a_tile[SIDX10(row_c+4, inner_k)]));
+            Bv1 = *((float4 *)(&b_tile[SIDX10(col_c, inner_k)]));
+            Bv2 = *((float4 *)(&b_tile[SIDX10(col_c+4, inner_k)]));
+            vscal(tmps[0], Av1, Bv1.x)     // tmps[x][y] 对应计算A[x][:] * B[:][y], 结果存在C[x][y]处
+            vscal(tmps[1], Av2, Bv1.x)
+            vscal(tmps[2], Av1, Bv1.y)
+            vscal(tmps[3], Av2, Bv1.y)
+            vscal(tmps[4], Av1, Bv1.z)
+            vscal(tmps[5], Av2, Bv1.z)
+            vscal(tmps[6], Av1, Bv1.w)
+            vscal(tmps[7], Av2, Bv1.w)
+            vscal(tmps[8], Av1, Bv2.x)
+            vscal(tmps[9], Av2, Bv2.x)
+            vscal(tmps[10], Av1, Bv2.y)
+            vscal(tmps[11], Av2, Bv2.y)
+            vscal(tmps[12], Av1, Bv2.z)
+            vscal(tmps[13], Av2, Bv2.z)
+            vscal(tmps[14], Av1, Bv2.w)
+            vscal(tmps[15], Av2, Bv2.w)
+        }
+        __syncthreads();
+    }
+
+    // 每个线程从全局内存中读取8*8个数
+    // 从全局内存中取出row_a, col_c处连续的4个值给Cv
+    Cv[0] = *((float4 *)(&C[IDX10(row_c, col_c, ldc)]));
+    Cv[1] = *((float4 *)(&C[IDX10(row_c+4, col_c, ldc)]));
+    Cv[2] = *((float4 *)(&C[IDX10(row_c, col_c+1, ldc)]));
+    Cv[3] = *((float4 *)(&C[IDX10(row_c+4, col_c+1, ldc)]));
+    Cv[4] = *((float4 *)(&C[IDX10(row_c, col_c+2, ldc)]));
+    Cv[5] = *((float4 *)(&C[IDX10(row_c+4, col_c+2, ldc)]));
+    Cv[6] = *((float4 *)(&C[IDX10(row_c, col_c+3, ldc)]));
+    Cv[7] = *((float4 *)(&C[IDX10(row_c+4, col_c+3, ldc)]));
+    Cv[8] = *((float4 *)(&C[IDX10(row_c, col_c+4, ldc)]));
+    Cv[9] = *((float4 *)(&C[IDX10(row_c+4, col_c+4, ldc)]));
+    Cv[10] = *((float4 *)(&C[IDX10(row_c, col_c+5, ldc)]));
+    Cv[11] = *((float4 *)(&C[IDX10(row_c+4, col_c+5, ldc)]));
+    Cv[12] = *((float4 *)(&C[IDX10(row_c, col_c+6, ldc)]));
+    Cv[13] = *((float4 *)(&C[IDX10(row_c+4, col_c+6, ldc)]));
+    Cv[14] = *((float4 *)(&C[IDX10(row_c, col_c+7, ldc)]));
+    Cv[15] = *((float4 *)(&C[IDX10(row_c+4, col_c+7, ldc)]));
+
+    // 每个线程进行8*8次计算
+    vfma(tmps[0], alpha, tmps[0], beta, Cv[0])
+    vfma(tmps[1], alpha, tmps[1], beta, Cv[1])
+    vfma(tmps[2], alpha, tmps[2], beta, Cv[2])
+    vfma(tmps[3], alpha, tmps[3], beta, Cv[3])
+    vfma(tmps[4], alpha, tmps[4], beta, Cv[4])
+    vfma(tmps[5], alpha, tmps[5], beta, Cv[5])
+    vfma(tmps[6], alpha, tmps[6], beta, Cv[6])
+    vfma(tmps[7], alpha, tmps[7], beta, Cv[7])
+    vfma(tmps[8], alpha, tmps[8], beta, Cv[8])
+    vfma(tmps[9], alpha, tmps[9], beta, Cv[9])
+    vfma(tmps[10], alpha, tmps[10], beta, Cv[10])
+    vfma(tmps[11], alpha, tmps[11], beta, Cv[11])
+    vfma(tmps[12], alpha, tmps[12], beta, Cv[12])
+    vfma(tmps[13], alpha, tmps[13], beta, Cv[13])
+    vfma(tmps[14], alpha, tmps[14], beta, Cv[14])
+    vfma(tmps[15], alpha, tmps[15], beta, Cv[15])
+
+    // 每个线程写入8*8个数到全局内存
+    *((float4 *)(&C[IDX10(row_c, col_c, ldc)])) = tmps[0];
+    *((float4 *)(&C[IDX10(row_c+4, col_c, ldc)])) = tmps[1];
+    *((float4 *)(&C[IDX10(row_c, col_c+1, ldc)])) = tmps[2];
+    *((float4 *)(&C[IDX10(row_c+4, col_c+1, ldc)])) = tmps[3];
+    *((float4 *)(&C[IDX10(row_c, col_c+2, ldc)])) = tmps[4];
+    *((float4 *)(&C[IDX10(row_c+4, col_c+2, ldc)])) = tmps[5];
+    *((float4 *)(&C[IDX10(row_c, col_c+3, ldc)])) = tmps[6];
+    *((float4 *)(&C[IDX10(row_c+4, col_c+3, ldc)])) = tmps[7];
+    *((float4 *)(&C[IDX10(row_c, col_c+4, ldc)])) = tmps[8];
+    *((float4 *)(&C[IDX10(row_c+4, col_c+4, ldc)])) = tmps[9];
+    *((float4 *)(&C[IDX10(row_c, col_c+5, ldc)])) = tmps[10];
+    *((float4 *)(&C[IDX10(row_c+4, col_c+5, ldc)])) = tmps[11];
+    *((float4 *)(&C[IDX10(row_c, col_c+6, ldc)])) = tmps[12];
+    *((float4 *)(&C[IDX10(row_c+4, col_c+6, ldc)])) = tmps[13];
+    *((float4 *)(&C[IDX10(row_c, col_c+7, ldc)])) = tmps[14];
+    *((float4 *)(&C[IDX10(row_c+4, col_c+7, ldc)])) = tmps[15];
+}
+
+
 int main(int argc, char** argv) {
     if (argc < 4) {
         std::cout << "Usage: ./a.out M N K" << std::endl;
@@ -663,11 +793,15 @@ int main(int argc, char** argv) {
     gemm8_4x4_micro_kernel<<<grid2, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4x4个元素
     gemm8_4x4_micro_kernel_2<<<grid2, block9>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4x4个元素
     gemm9_8x8_micro_kernel<<<grid3, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理8x8个元素
+    gemm10_8x8_warp_tile<<<grid3, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理8x8个元素, warp tile
+    // mysgemm_v1<<<grid, block>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);
     // mysgemm_v2<<<grid, block>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);
+    // mysgemm_v3<<<grid, 32*32>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);
     // mysgemm_v4<<<grid, 32*32>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);
     // mysgemm_v5<<<grid, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4个元素
     // mysgemm_v7<<<grid2, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理4x4个元素
     // mysgemm_v8<<<grid3, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理8x8个元素
+    // mysgemm_v9<<<grid3, 16*16>>>(M, N, K, 1.0f, dA, dB, 0.0f, dC);   // 每个线程处理8x8个元素
     cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
     
     // matrix multiplication using cublas (M, K) * (K, N) = (M, N)
