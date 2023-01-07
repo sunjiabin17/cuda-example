@@ -112,3 +112,97 @@ __global__ __launch_bounds__(256) void gemm8_4x4_micro_kernel(int M, int N, int 
     *((float4*)(&C[IDX8(row_a, col_c+3, ldc)])) = tmps[3];
 }
 
+
+// 二维线程块
+__global__ __launch_bounds__(256) void gemm8_4x4_micro_kernel_2(int M, int N, int K, float alpha, float* A, float* B, float beta, float* C) {
+    // block size: 64*64, thread size: 16*16
+    int lda = M, ldb = K, ldc = M;
+    int tx = threadIdx.x, ty = threadIdx.y;
+    int bx = blockIdx.x, by = blockIdx.y;
+
+    #define IDX9(i,j,ld) (((j)*(ld))+(i))  // A,B,C matrix index
+    #define SAIDX(i,j) IDX9(i,j,(1<<6))     // shared memory a index
+    #define SBIDX(i,j) IDX9(i,j,(1<<4))     // shared memory b index
+
+    int tx_a = tx << 2, ty_a = ty;
+    int tx_b = (tx&3)<<2, ty_b = ((ty<<4)+tx)>>2;
+    int tx_c = tx << 2, ty_c = ty << 2;
+
+    int lda16 = lda<<4;
+
+    A = &(A[(bx << 6)]);
+    B = &(B[(by << 6) * ldb]);
+    C = &(C[(bx << 6) + (by << 6) * ldc]);  // the TB size is 64.
+
+    __shared__ float a_tile[bM8*bK8];
+    __shared__ float b_tile[bK8*bN8];
+
+    float4 Av, Bv, Cv[4], tmps[4];
+    memset(tmps, 0, sizeof(tmps));
+
+    // 1. 数据布局如何变化: from global memory to shared memory
+    // 2. float4加载连续内存如何处理
+    // 3. 数据在shared memory中的位置以及如何计算
+    for (int k_idx = 0; k_idx < K; k_idx += bK8) {
+        Av = *((float4 *)(&A[IDX8(tx_a, ty_a, lda)]));   // 从A中取连续的4个数
+        Bv = *((float4 *)(&B[IDX8(tx_b, ty_b, ldb)]));   // 从B中取连续的4个数
+        ((float4 *)a_tile)[tx+ty*bx] = Av;            // 将Av中的4个数存入共享内存中的连续内存
+        // ((float4 *)b_tile)[tx+ty*16] = Bv;
+        b_tile[SAIDX(ty_b, tx_b)] = Bv.x;     // 将Bv中的4个数存入共享内存, 内存不连续, 之间的距离为64
+        b_tile[SAIDX(ty_b, tx_b+1)] = Bv.y;
+        b_tile[SAIDX(ty_b, tx_b+2)] = Bv.z;
+        b_tile[SAIDX(ty_b, tx_b+3)] = Bv.w;
+        A += lda16; // A偏移16列 16*lda
+        B += bK8;   // B偏移16行
+        __syncthreads();
+        #pragma unroll
+        for (int inner_k = 0; inner_k < bK8; ++inner_k) {   // bK8=16, 数据宽度为64, 每次计算4*4个数
+            Av = *((float4 *)(&a_tile[SAIDX(tx_a, inner_k)])); // 从共享内存中取出连续的4个值给Av，需要和b相乘并累加
+            Bv = *((float4 *)(&b_tile[SAIDX(ty_c, inner_k)])); // 从共享内存中取出连续的4个值给Bv，这4个数对应bK8中每个维度的值
+
+            tmps[0].x += Av.x * Bv.x;
+            tmps[0].y += Av.y * Bv.x;
+            tmps[0].z += Av.z * Bv.x;
+            tmps[0].w += Av.w * Bv.x;
+            tmps[1].x += Av.x * Bv.y;
+            tmps[1].y += Av.y * Bv.y;
+            tmps[1].z += Av.z * Bv.y;
+            tmps[1].w += Av.w * Bv.y;
+            tmps[2].x += Av.x * Bv.z;
+            tmps[2].y += Av.y * Bv.z;
+            tmps[2].z += Av.z * Bv.z;
+            tmps[2].w += Av.w * Bv.z;
+            tmps[3].x += Av.x * Bv.w;
+            tmps[3].y += Av.y * Bv.w;
+            tmps[3].z += Av.z * Bv.w;
+            tmps[3].w += Av.w * Bv.w;
+        }
+        __syncthreads();
+    }
+    Cv[0] = *((float4*)(&C[IDX9(tx_a, ty_c, ldc)]));
+    Cv[1] = *((float4*)(&C[IDX9(tx_a, ty_c+1, ldc)]));
+    Cv[2] = *((float4*)(&C[IDX9(tx_a, ty_c+2, ldc)]));
+    Cv[3] = *((float4*)(&C[IDX9(tx_a, ty_c+3, ldc)]));
+
+    tmps[0].x = alpha * tmps[0].x + beta * Cv[0].x;
+    tmps[0].y = alpha * tmps[0].y + beta * Cv[0].y;
+    tmps[0].z = alpha * tmps[0].z + beta * Cv[0].z;
+    tmps[0].w = alpha * tmps[0].w + beta * Cv[0].w;
+    tmps[1].x = alpha * tmps[1].x + beta * Cv[1].x;
+    tmps[1].y = alpha * tmps[1].y + beta * Cv[1].y;
+    tmps[1].z = alpha * tmps[1].z + beta * Cv[1].z;
+    tmps[1].w = alpha * tmps[1].w + beta * Cv[1].w;
+    tmps[2].x = alpha * tmps[2].x + beta * Cv[2].x;
+    tmps[2].y = alpha * tmps[2].y + beta * Cv[2].y;
+    tmps[2].z = alpha * tmps[2].z + beta * Cv[2].z;
+    tmps[2].w = alpha * tmps[2].w + beta * Cv[2].w;
+    tmps[3].x = alpha * tmps[3].x + beta * Cv[3].x;
+    tmps[3].y = alpha * tmps[3].y + beta * Cv[3].y;
+    tmps[3].z = alpha * tmps[3].z + beta * Cv[3].z;
+    tmps[3].w = alpha * tmps[3].w + beta * Cv[3].w;
+
+    *((float4*)(&C[IDX9(tx_a, ty_c, ldc)])) = tmps[0];
+    *((float4*)(&C[IDX9(tx_a, ty_c+1, ldc)])) = tmps[1];
+    *((float4*)(&C[IDX9(tx_a, ty_c+2, ldc)])) = tmps[2];
+    *((float4*)(&C[IDX9(tx_a, ty_c+3, ldc)])) = tmps[3];
+}
