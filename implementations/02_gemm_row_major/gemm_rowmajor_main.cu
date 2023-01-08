@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     float* C1 = new float[M * N];
 
     // set random seed
-    srand((unsigned)time(NULL));
+    // srand((unsigned)time(NULL));
 
     std::generate(A, A + M * K, []() {return (float)(rand() % 10); });
     std::generate(B, B + K * N, []() {return (float)(rand() % 10); });
