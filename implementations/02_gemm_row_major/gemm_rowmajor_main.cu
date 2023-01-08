@@ -8,6 +8,7 @@
 
 #include "gemm1_naive.cuh"
 #include "gemm2_tile.cuh"
+#include "gemm3_4x1.cuh"
 
 using namespace std;
 
@@ -16,6 +17,13 @@ using namespace std;
 #define K 4096
 
 int main(int argc, char **argv) {
+
+    int prints = 0;
+    if (argc > 1) {
+        prints = atoi(argv[1]);
+    }
+
+
     float* A = new float[M * K];
     float* B = new float[K * N];
     float* C = new float[M * N];
@@ -43,17 +51,18 @@ int main(int argc, char **argv) {
     int ldb = N;
     int ldc = N;
 
-    // test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
-    test_sgemm2(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
-    cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
-    cudaMemset(dC, 0.f, M * N * sizeof(float));
-
     // matrix multiplication using cublas (M, K) * (K, N) = (M, N)
     cublasHandle_t handle;
     cublasCreate(&handle);
     cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, dB, ldb, dA, lda, &beta, dC, ldc);
     cudaMemcpy(C1, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);
     cublasDestroy(handle);
+
+    test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm2(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm3(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
+    cudaMemset(dC, 0.f, M * N * sizeof(float));
 
 
     // compare
@@ -76,40 +85,53 @@ int main(int argc, char **argv) {
         std::cout << "wrong" << std::endl;
     }
 
-    if (false) {
-        // print A
-        std::cout << "A: " << std::endl;
-        for (int i = 0; i < M; ++i) {
-            for (int j = 0; j < K; ++j) {
-                std::cout << A[i * K + j] << " ";
-            }
-            std::cout << std::endl;
-        }
-        std::cout << std::endl;
-        // print B
-        std::cout << "B: " << std::endl;
-        for (int i = 0; i < K; ++i) {
-            for (int j = 0; j < N; ++j) {
-                std::cout << B[i * N + j] << " ";
-            }
-            std::cout << std::endl;
-        }
-        std::cout << std::endl;
+    if (prints > 0) {
+        // // print A
+        // std::cout << "A: " << std::endl;
+        // for (int i = 0; i < M; ++i) {
+        //     for (int j = 0; j < K; ++j) {
+        //         std::cout << A[i * K + j] << " ";
+        //     }
+        //     std::cout << std::endl;
+        // }
+        // std::cout << std::endl;
+        // // print B
+        // std::cout << "B: " << std::endl;
+        // for (int i = 0; i < K; ++i) {
+        //     for (int j = 0; j < N; ++j) {
+        //         std::cout << B[i * N + j] << " ";
+        //     }
+        //     std::cout << std::endl;
+        // }
+        // std::cout << std::endl;
         // print C
+        int cnt = 0;
         std::cout << "C: " << std::endl;
         for (int i = 0; i < M; ++i) {
             for (int j = 0; j < N; ++j) {
+                if (cnt > prints)
+                    break;
                 std::cout << C[i * N + j] << " ";
+                cnt++;
             }
+            if (cnt > prints)
+                break;
             std::cout << std::endl;
         }
+
+        cnt = 0;
         std::cout << std::endl;
         // print C1
         std::cout << "C1: " << std::endl;
         for (int i = 0; i < M; ++i) {
             for (int j = 0; j < N; ++j) {
+                if (cnt > prints)
+                    break;
                 std::cout << C1[i * N + j] << " ";
+                cnt++;
             }
+            if (cnt > prints)
+                break;
             std::cout << std::endl;
         }
         std::cout << std::endl;
