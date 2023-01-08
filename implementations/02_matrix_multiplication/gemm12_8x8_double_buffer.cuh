@@ -58,6 +58,7 @@ __global__ __launch_bounds__(256) void gemm12_8x8_double_buffer(int M, int N, in
     memset(tmps, 0, sizeof(tmps));
 
     // 从全局内存加载A和B中的一个block到共享内存
+    // 在执行256次大迭代之前，我们需要提前将第0次大迭代的数据存到write SM中
     pref_Av = *((float4 *)(&A[IDX12(row_a, col_a, lda)]));
     pref_Bv = *((float4 *)(&B[IDX12(row_b, col_b, ldb)]));
     ((float4 *)ptr_a_tile)[tx] = pref_Av;
@@ -66,6 +67,7 @@ __global__ __launch_bounds__(256) void gemm12_8x8_double_buffer(int M, int N, in
     ptr_b_tile[SIDX12(col_b, row_b+2)] = pref_Bv.z;
     ptr_b_tile[SIDX12(col_b, row_b+3)] = pref_Bv.w;
     __syncthreads();
+    // 并且将第0次小迭代的数据存到write REG中
     Av1[0] = *((float4 *)(&ptr_a_tile[SIDX12(row_c, 0)]));
     Av2[0] = *((float4 *)(&ptr_a_tile[SIDX12(row_c+4, 0)]));
     Bv1[0] = *((float4 *)(&ptr_b_tile[SIDX12(col_c, 0)]));
@@ -80,6 +82,12 @@ __global__ __launch_bounds__(256) void gemm12_8x8_double_buffer(int M, int N, in
         // 预取全局内存中A和B中的下一个block
         pref_Av = *((float4 *)(&ptr_A[IDX12(row_a, col_a, lda)]));
         pref_Bv = *((float4 *)(&ptr_B[IDX12(row_b, col_b, ldb)]));
+        /**
+         * 由于从global memory中取数的时钟周期非常多。
+         * 所以在等待数据取回的同时，对read SM中的数据进行计算。
+         * 也就是我们在等待的同时，需要开启8次小迭代来进行计算。
+         * 而小迭代中也存在着读写分离，在对read REG进行计算之前，需要先执行write REG的操作，通过这种方式来掩盖访存的latency。
+         */
         #pragma unroll
         for (int inner_k = 0; inner_k < bK12; ++inner_k) {
             int next_inner_k = (inner_k+1)&7;
