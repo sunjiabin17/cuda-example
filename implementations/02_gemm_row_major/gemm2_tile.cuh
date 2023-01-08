@@ -15,15 +15,18 @@ __global__ void sgemm2(int M, int N, int K, float alpha, float *A, int lda, floa
     int tx = threadIdx.x, ty = threadIdx.y;
     int bx = blockIdx.x, by = blockIdx.y;
 
-    A = &(A[bx * Ms * lda]);
-    B = &(B[by * Ns]);
-    C = &(C[bx * Ms * ldc + by * Ns]);
+    // A = &(A[bx * Ms * lda]);
+    // B = &(B[by * Ns]);
+    // C = &(C[bx * Ms * ldc + by * Ns]);
+    A = A + bx * Ms * lda;
+    B = B + by * Ns;
+    C = C + bx * Ms * ldc + by * Ns;
 
     __shared__ float a_shared[Ms][Ks];
     __shared__ float b_shared[Ks][Ns];
 
     float sum = 0.f;
-    for (int k_idx = 0; k_idx < K / Ks; ++k_idx) {
+    for (int k_idx = 0; k_idx < K; k_idx += Ks) {
         a_shared[ty][tx] = A[ty * lda + tx];
         b_shared[ty][tx] = B[ty * ldb + tx];
         A = A + Ks;
@@ -31,18 +34,20 @@ __global__ void sgemm2(int M, int N, int K, float alpha, float *A, int lda, floa
         __syncthreads();
         #pragma unroll
         for (int kk = 0; kk < Ks; ++kk) {
-            sum += a_shared[kk][tx] * b_shared[ty][kk];
+            sum += a_shared[tx][kk] * b_shared[kk][ty];
         }
-
+        __syncthreads();
     }
-    sum = sum * alpha + beta * C[tx * ldc + ty];
+    // sum = sum * alpha + beta * C[tx * ldc + ty];
+    // C[(Ms*bx+ty)*ldc + Ns*by+tx] = sum;
     C[tx * ldc + ty] = sum;
 }
 
+
 void test_sgemm2(int M, int N, int K, float *alpha, float *dA, int lda, float *dB, int ldb, 
                 float *beta, float *dC, int ldc) {
-    dim3 block(Ns, Ms);
-    dim3 grid((N + Ns - 1) / Ns, (M + Ms - 1) / Ms);
+    dim3 block(Ms, Ns);
+    dim3 grid((M + Ms - 1) / Ms, (N + Ns - 1) / Ns);
     
     sgemm2<<<grid, block>>>(M, N, K, *alpha, dA, lda, dB, ldb, *beta, dC, ldc);
     cudaDeviceSynchronize();
