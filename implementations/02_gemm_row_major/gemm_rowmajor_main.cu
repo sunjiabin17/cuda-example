@@ -7,12 +7,13 @@
 #include <random>
 
 #include "gemm1_naive.cuh"
+#include "gemm2_tile.cuh"
 
 using namespace std;
 
 #define M 1024
-#define N 1024
-#define K 1024
+#define N 2048
+#define K 4096
 
 int main(int argc, char **argv) {
     float* A = new float[M * K];
@@ -36,21 +37,24 @@ int main(int argc, char **argv) {
     cudaMemcpy(dB, B, K * N * sizeof(float), cudaMemcpyHostToDevice);
     cudaMemcpy(dC, C, M * N * sizeof(float), cudaMemcpyHostToDevice);
 
-    // matrix multiplication using cublas (M, K) * (K, N) = (M, N)
-    cublasHandle_t handle;
-    cublasCreate(&handle);
     float alpha = 1.0f;
     float beta = 0.0f;
-    
     int lda = K;
     int ldb = N;
     int ldc = N;
-    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, dB, ldb, dA, lda, &beta, dC, ldc);
-    cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);
 
-    test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
-    cudaMemcpy(C1, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
-    
+    // test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm2(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
+    cudaMemset(dC, 0.f, M * N * sizeof(float));
+
+    // matrix multiplication using cublas (M, K) * (K, N) = (M, N)
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+    cublasSgemm(handle, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, dB, ldb, dA, lda, &beta, dC, ldc);
+    cudaMemcpy(C1, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);
+    cublasDestroy(handle);
+
 
     // compare
     bool flag = true;
