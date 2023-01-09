@@ -33,23 +33,24 @@ __global__ void sgemm5(int M, int N, int K, float alpha, float *A, int lda, floa
     float* pC = &(C[bx * Ms64 * ldc + by * Ns64]);
 
     // __shared__ float a_shared[Ms64][Ks16];
-    __shared__ float a_shared[Ks16][Ms64];  // here
+    __shared__ float a_shared[Ks16][Ms64];  // here, transpose a_shared after loaded from global to shared
     __shared__ float b_shared[Ks16][Ns64];
 
     float4 Av, Bv, Cv[4], sums[4];
     memset(sums, 0.f, sizeof(sums));
 
     for (int k_idx = 0; k_idx < K; k_idx += Ks16) {
-        Av = *((float4 *)(&pA[row_a * lda + col_a]));
+        Av = *((float4 *)(&pA[row_a * lda + col_a]));   // load 4 consecutive elements from A
         Bv = *((float4 *)(&pB[row_b * ldb + col_b]));
 
-        a_shared[col_a][row_a] = Av.x;
+        a_shared[col_a][row_a] = Av.x;                  // transpose A
         a_shared[col_a+1][row_a] = Av.y;
         a_shared[col_a+2][row_a] = Av.z;
         a_shared[col_a+3][row_a] = Av.w;
 
-        ((float4 *)(b_shared[row_b]))[col_b>>2] = Bv;
-        // b_shared[row_b][col_b] = Bv.x;
+        ((float4 *)(b_shared[row_b]))[col_b>>2] = Bv;   // 方法1
+        // *(float4 *)(&b_shared[row_b][col_b]) = Bv;   // 方法2
+        // b_shared[row_b][col_b] = Bv.x;               // 方法3
         // b_shared[row_b][col_b+1] = Bv.y;
         // b_shared[row_b][col_b+2] = Bv.z;
         // b_shared[row_b][col_b+3] = Bv.w;
@@ -60,8 +61,8 @@ __global__ void sgemm5(int M, int N, int K, float alpha, float *A, int lda, floa
         __syncthreads();
         #pragma unroll
         for (int kk = 0; kk < Ks16; ++kk) {
-            Av = *((float4 *)(&a_shared[kk][row_c])); // A中的4个数分别对应C的每一行
-            Bv = *((float4 *)(&b_shared[kk][col_c])); // B中的4个数分别对应C的每一列
+            Av = *((float4 *)(&a_shared[kk][row_c])); // A中的4个连续的数分别对应C的每一行
+            Bv = *((float4 *)(&b_shared[kk][col_c])); // B中的4个连续的数分别对应C的每一列
 
             // C的一个block中的一行, 内存连续, 对应sums[0]
             sums[0].x += Av.x * Bv.x;
