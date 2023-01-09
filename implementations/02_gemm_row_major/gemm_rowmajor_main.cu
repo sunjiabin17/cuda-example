@@ -11,6 +11,7 @@
 #include "gemm3_2x2.cuh"
 #include "gemm4_4x4.cuh"
 #include "gemm5_4x4_vectorized.cuh"
+#include "gemm6_8x8_micro_kernel.cuh"
 
 using namespace std;
 
@@ -65,6 +66,7 @@ int main(int argc, char **argv) {
     test_sgemm3(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm4(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm5(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm6(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
     cudaMemset(dC, 0.f, M * N * sizeof(float));
 
