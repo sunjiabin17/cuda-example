@@ -8,7 +8,8 @@
 
 #include "gemm1_naive.cuh"
 #include "gemm2_tile.cuh"
-#include "gemm3_4x1.cuh"
+#include "gemm3_2x2.cuh"
+#include "gemm4_4x4.cuh"
 
 using namespace std;
 
@@ -58,9 +59,10 @@ int main(int argc, char **argv) {
     cudaMemcpy(C1, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);
     cublasDestroy(handle);
 
-    test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
-    test_sgemm2(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    // test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    // test_sgemm2(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm3(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm4(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
     cudaMemset(dC, 0.f, M * N * sizeof(float));
 
