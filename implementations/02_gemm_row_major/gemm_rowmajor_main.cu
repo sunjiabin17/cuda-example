@@ -14,6 +14,8 @@
 #include "gemm6_8x8_micro_kernel.cuh"
 #include "gemm7_8x8_warp_tile.cuh"
 #include "gemm8_8x8_prefetch.cuh"
+#include "gemm9_8x8_double_buffer.cuh"
+// #include "gemm9_8x8_double_buffer2.cuh"
 
 using namespace std;
 
@@ -63,14 +65,15 @@ int main(int argc, char **argv) {
     cudaMemcpy(C1, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);
     cublasDestroy(handle);
 
-    // test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
-    // test_sgemm2(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm1(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm2(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm3(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm4(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm5(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm6(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm7(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     test_sgemm8(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
+    test_sgemm9(M, N, K, &alpha, dA, lda, dB, ldb, &beta, dC, ldc);
     cudaMemcpy(C, dC, M * N * sizeof(float), cudaMemcpyDeviceToHost);    
     cudaMemset(dC, 0.f, M * N * sizeof(float));
 
