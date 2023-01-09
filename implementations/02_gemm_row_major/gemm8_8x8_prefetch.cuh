@@ -71,7 +71,7 @@ __global__ void sgemm8(int M, int N, int K, float alpha, float *A, int lda, floa
     a_shared[col_a+1][row_a] = pref_Av.y;
     a_shared[col_a+2][row_a] = pref_Av.z;
     a_shared[col_a+3][row_a] = pref_Av.w;
-    ((float4 *)(b_shared[row_b]))[col_b>>2] = pref_Bv;  // 方法1
+    *((float4 *)(&b_shared[row_b][col_b])) = pref_Bv;   // 方法2
     __syncthreads();
 
     // 2. 加载第一个A的8个元素和B的8个元素到寄存器Av[0] Bv[0], 准备做向量外积
@@ -118,7 +118,7 @@ __global__ void sgemm8(int M, int N, int K, float alpha, float *A, int lda, floa
         a_shared[col_a+1][row_a] = pref_Av.y;
         a_shared[col_a+2][row_a] = pref_Av.z;
         a_shared[col_a+3][row_a] = pref_Av.w;
-        ((float4 *)(b_shared[row_b]))[col_b>>2] = pref_Bv;
+        *((float4 *)(&b_shared[row_b][col_b])) = pref_Bv;
         __syncthreads();
         // 6. 预加载下一次大循环开始的A的8个元素和B的8个元素到寄存器Av[0] Bv[0]
         Av1[0] = *((float4 *)(&a_shared[0][row_c]));
