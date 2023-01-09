@@ -12,7 +12,7 @@
 #define Mr4 4
 #define Nr4 4
 
-// 一个线程计算2x2
+// 一个线程计算4x4
 // ({Ms64,Ns64,Ks16}={64,64,16}, {Mr4,Nr4}={4,4})
 __global__ void sgemm4(int M, int N, int K, float alpha, float *A, int lda, float *B, int ldb,
                       float beta, float *C, int ldc) {
