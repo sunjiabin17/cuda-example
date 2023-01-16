@@ -58,14 +58,14 @@ __global__ void reduce(int *input, int *output, int n) {
 }
 
 int main() {
-    constexpr int N = 1 << 20;
+    constexpr int N = 1 << 15;
     size_t bytes = N * sizeof(int);
     int *output, *input;
  
     cudaMallocManaged(&output, sizeof(int));
     cudaMallocManaged(&input, bytes);
-    std::fill(input, input + N, 1);
-
+    // std::fill(input, input + N, 1);
+    generate(input, input + N, []() { return rand() % 100; });
     int h_sum = accumulate(input, input + N, 0);
 
     
