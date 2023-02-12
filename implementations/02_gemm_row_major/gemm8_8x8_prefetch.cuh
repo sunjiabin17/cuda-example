@@ -48,8 +48,10 @@ __global__ void sgemm8(int M, int N, int K, float alpha, float *A, int lda, floa
     int col_w = (lane_id / 2) % 8;
     int row_w = (lane_id / 16) * 2 + (lane_id % 2);
 
-    int row_c = (warp_id/2) * Mw + row_w * 8;
-    int col_c = (warp_id%2) * Nw + col_w * 8;
+    // int row_c = (warp_id/2) * Mw + row_w * 8;
+    // int col_c = (warp_id%2) * Nw + col_w * 8;
+    int row_c = (warp_id%2) * Nw + col_w * 8;
+    int col_c = (warp_id/2) * Mw + row_w * 8;
 
     float* pA = &(A[bx * Ms128 * lda]);
     float* pB = &(B[by * Ns128]);
