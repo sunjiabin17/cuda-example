@@ -10,7 +10,6 @@ __device__ void count_if(int* count, T* data, int n, Predicate p) {
     }
 }
 
-
 __global__ void xyzw_frequency(int* count, char* text, int len) {
     const char letters[] = {'x', 'y', 'z', 'w'};
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
