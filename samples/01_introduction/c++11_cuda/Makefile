@@ -1,5 +1,5 @@
 all: build
-build: c++11_cuda
+build: c++11_cuda.bin
 PHONY: all build clean
 
 # 查看显卡对应的计算能力
@@ -11,8 +11,8 @@ NVCCFLAGS := -std=c++11 -m64 -arch=sm_89 --ptxas-options=-v -g -G
 c++11_cuda.o: c++11_cuda.cu
 	@$(NVCC) $(NVCCFLAGS) -c $< -o $@
 
-c++11_cuda: c++11_cuda.o
+c++11_cuda.bin: c++11_cuda.o
 	@$(NVCC) $(NVCCFLAGS) $< -o $@
 
 clean:
-	rm -rf *.o c++11_cuda
+	rm -rf *.o c++11_cuda.bin
