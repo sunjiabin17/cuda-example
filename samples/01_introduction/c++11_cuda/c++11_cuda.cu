@@ -28,6 +28,10 @@ int main(int argc, char** argv) {
     constexpr char* filename = "warandpeace.txt";
     int numBytes = 16 * 1048576;
 
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start, 0);
     char* h_text = (char*)malloc(numBytes);
     char* d_text;
     cudaMalloc(&d_text, numBytes);
@@ -51,6 +55,12 @@ int main(int argc, char** argv) {
     int blocksPerGrid = (len + threadsPerBlock - 1) / threadsPerBlock;
     xyzw_frequency<<<blocksPerGrid, threadsPerBlock>>>(d_count, d_text, len);
     cudaMemcpy(&count, d_count, sizeof(int), cudaMemcpyDeviceToHost);
+
+    cudaEventRecord(stop, 0);
+    cudaEventSynchronize(stop);
+    float elapsedTime;
+    cudaEventElapsedTime(&elapsedTime, start, stop);
+    std::cout << "elapsed time: " << elapsedTime << " ms" << std::endl;
     std::cout << "count: " << count << std::endl;
 
     cudaFree(d_text);
