@@ -13,7 +13,7 @@
 #define NUM_BLOCKS 64
 #define NUM_THREADS 256
 
-#define KERNEL_FILE "/home/tars/projects/code/cuda_test/samples/01_introduction/clock_nvrtc/clock.cu"
+#define KERNEL_FILE "clock.cu"
 
 #define NVRTC_SAFE_CALL(Name, x)                                \
   do {                                                          \
@@ -66,7 +66,10 @@ void compileFileToCUBIN(const char* filename, char** cubin_result, size_t* cubin
     compile_option = "-arch=sm_" + std::to_string(major) + std::to_string(minor);
     compile_params[0] = (char*)malloc(sizeof(char) * compile_option.size());
     strcpy(compile_params[0], compile_option.c_str());
-    compile_params[1] = "--std=c++11";
+    
+    compile_option = "--std=c++11";
+    compile_params[1] = (char*)malloc(sizeof(char) * compile_option.size());
+    strcpy(compile_params[1], compile_option.c_str());
 
     constexpr int num_compile_params = sizeof(compile_params) / sizeof(compile_params[0]);
 
@@ -95,9 +98,9 @@ void compileFileToCUBIN(const char* filename, char** cubin_result, size_t* cubin
     *cubin_result = cubin;
     *cubin_size = code_size;
 
-    // for (int i = 0; i < num_compile_params; i++) {
-    //     free(compile_params[i]);
-    // }
+    for (int i = 0; i < num_compile_params; i++) {
+        free(compile_params[i]);
+    }
 }
 
 CUmodule loadCUBIN(char* cubin, size_t cubin_size) {
@@ -131,7 +134,6 @@ int main(int argc, char** argv) {
     CUmodule module = loadCUBIN(cubin, cubin_size);
     CUfunction kernel_addr;
     CUresult res = cuModuleGetFunction(&kernel_addr, module, "timeReduction");
-    std::cout << res << std::endl;
     if (res != CUDA_SUCCESS) {
         throw std::runtime_error("cuModuleGetFunction failed");
     }
